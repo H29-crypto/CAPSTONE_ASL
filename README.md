@@ -167,8 +167,3 @@ the complete list):
   Pipelines," arXiv:1906.08172, 2019.
 - S. K. Liddell and R. E. Johnson, "American Sign Language: The
   Phonological Base," *Sign Language Studies* 64, 1989.
-
-## License
-
-[Add a license here. For an academic capstone, a permissive license like
-MIT or Apache 2.0 is common. If unsure, ask your advisor.]
