@@ -1,0 +1,82 @@
+{
+  "dataset_summary": {
+    "recognition_rows": 2234,
+    "recognition_num_classes": 100,
+    "recognition_split_counts": {
+      "train": 1215,
+      "test": 777,
+      "val": 242
+    },
+    "clean_phase_rows": 2896,
+    "clean_phase_split_counts": {
+      "train": 1561,
+      "test": 1020,
+      "val": 315
+    },
+    "segment_status_counts": {
+      "ok": 2891,
+      "warning": 5
+    },
+    "segment_quality_counts": {
+      "good": 2891,
+      "active_very_broad": 3,
+      "stroke_very_broad": 2
+    }
+  },
+  "phase_tcn_summary": {
+    "test_accuracy": 0.9109489585494125,
+    "test_macro_f1": 0.8974269986843053,
+    "num_test_sequences": 1020,
+    "num_test_frames": 81953
+  },
+  "phase_aware_recognition_summary": {
+    "checkpoint_epoch": 46,
+    "val_top1": 0.8264462809917356,
+    "val_top5": 0.9297520661157025,
+    "val_macro_f1": 0.8147337662337664,
+    "test_top1": 0.6885456885456885,
+    "test_top5": 0.87001287001287,
+    "test_macro_f1": 0.6694782730985068,
+    "num_test_sequences": 777
+  },
+  "baseline_recognition_summary": {
+    "checkpoint_epoch": 29,
+    "val_top1": 0.8099173553719008,
+    "val_top5": 0.9297520661157025,
+    "val_macro_f1": 0.8076500721500721,
+    "test_top1": 0.6795366795366795,
+    "test_top5": 0.8597168597168597,
+    "test_macro_f1": 0.6574452292421735,
+    "num_test_sequences": 777
+  },
+  "delta_phase_aware_minus_baseline": {
+    "delta_test_top1": 0.009009009009009028,
+    "delta_test_top5": 0.010296010296010238,
+    "delta_test_macro_f1": 0.012033043856333303,
+    "delta_val_top1": 0.016528925619834767,
+    "delta_val_top5": 0.0,
+    "delta_val_macro_f1": 0.0070836940836942475
+  },
+  "paired_analysis": {
+    "top1": {
+      "both_correct": 491,
+      "phase_only_correct": 44,
+      "baseline_only_correct": 37,
+      "both_wrong": 205,
+      "net_phase_gain": 7,
+      "mcnemar_chi2_approx": 0.4444444444444444,
+      "mcnemar_p_approx": 0.5049850750938458
+    },
+    "top5": {
+      "both_correct": 647,
+      "phase_only_correct": 29,
+      "baseline_only_correct": 21,
+      "both_wrong": 80,
+      "net_phase_gain": 8
+    }
+  },
+  "interpretation": {
+    "main_claim": "The phase-aware model achieved a small but consistent improvement over the no-phase baseline across test Top-1 accuracy, Top-5 accuracy, and Macro F1.",
+    "statistical_caution": "The paired McNemar approximation did not show a statistically strong Top-1 difference, so the improvement should be interpreted as modest and not conclusive."
+  }
+}
