@@ -1,0 +1,11 @@
+# Core deep learning framework
+torch>=2.0,<3.0
+
+# Computer vision
+opencv-python>=4.8,<5.0
+mediapipe>=0.10,<0.11
+
+# Numerical / data
+numpy>=1.24,<2.0
+scipy>=1.10
+pandas>=2.0
