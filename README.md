@@ -53,18 +53,19 @@ CAPSTONE_ASL/
 ├── notebooks/
 │   ├── Feature.ipynb                                  # Keypoint extraction (MediaPipe Tasks API)
 │   └── Un.ipynb                                       # Full training pipeline (90 cells)
-├── models/
+├── weights/
 │   ├── phase_tcn_best_safe_state.pt                   # Trained Phase Detection TCN
-│   ├── recognition_tcn_attention_best.pt              # Trained Recognition TCN + Attention
+│   └── recognition_tcn_attention_best.pt              # Trained Recognition TCN + Attention
+├── assets/
 │   ├── hand_landmarker.task                           # MediaPipe hand landmark model
 │   └── pose_landmarker_full.task                      # MediaPipe pose landmark model
-├── manifests/
+├── data/
 │   └── recognition_label_map_with_split_counts.csv    # 100-class label map
-├── reports/final_results/
-│   ├── final_results_summary.json
-│   ├── final_results_tables.md
+├── reports/
 │   ├── figures/                                       # fig_01–fig_06 (PNG)
-│   └── report_text/                                   # 01_abstract.md – 07_conclusion.md
+│   ├── report_text/                                   # 01_abstract.md – 07_conclusion.md
+│   ├── final_results_summary.json
+│   └── final_results_tables.md
 └── realtime_demo/
     ├── demo.py                                        # Webcam record-one-sign demo
     └── verify_pipeline.py                             # Offline checkpoint verification
@@ -113,7 +114,7 @@ Controls:
 
 On first run, the script downloads the two MediaPipe model files
 (`pose_landmarker_full.task` and `hand_landmarker.task`, ~17 MB total)
-into `models/`.
+into `assets/`.
 
 To verify the inference pipeline without a webcam — useful for confirming
 the checkpoints load correctly — run:

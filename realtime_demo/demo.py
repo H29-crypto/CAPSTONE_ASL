@@ -32,9 +32,9 @@ except ImportError:
 # PATHS
 # ─────────────────────────────────────────────────────────────
 BASE_DIR        = Path(__file__).resolve().parent.parent
-PHASE_CKPT_PATH = BASE_DIR / "models" / "phase_tcn_best_safe_state.pt"
-REC_CKPT_PATH   = BASE_DIR / "models" / "recognition_tcn_attention_best.pt"
-LABEL_MAP_PATH  = BASE_DIR / "manifests" / "recognition_label_map_with_split_counts.csv"
+PHASE_CKPT_PATH = BASE_DIR / "weights" / "phase_tcn_best_safe_state.pt"
+REC_CKPT_PATH   = BASE_DIR / "weights" / "recognition_tcn_attention_best.pt"
+LABEL_MAP_PATH  = BASE_DIR / "data" / "recognition_label_map_with_split_counts.csv"
 
 RECORD_SECONDS = 2.0
 TARGET_FPS     = 30
@@ -45,8 +45,8 @@ N_POSE    = 7
 N_HAND    = 21
 
 # MediaPipe Tasks API model files (downloaded once to models/)
-HAND_MODEL_PATH = BASE_DIR / "models" / "hand_landmarker.task"
-POSE_MODEL_PATH = BASE_DIR / "models" / "pose_landmarker_full.task"
+HAND_MODEL_PATH = BASE_DIR / "assets" / "hand_landmarker.task"
+POSE_MODEL_PATH = BASE_DIR / "assets" / "pose_landmarker_full.task"
 HAND_MODEL_URL  = ("https://storage.googleapis.com/mediapipe-models/"
                    "hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task")
 POSE_MODEL_URL  = ("https://storage.googleapis.com/mediapipe-models/"
