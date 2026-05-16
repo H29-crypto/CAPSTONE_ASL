@@ -31,7 +31,7 @@ except ImportError:
 # ─────────────────────────────────────────────────────────────
 # PATHS
 # ─────────────────────────────────────────────────────────────
-BASE_DIR        = Path(__file__).parent
+BASE_DIR        = Path(__file__).resolve().parent.parent
 PHASE_CKPT_PATH = BASE_DIR / "models" / "phase_tcn_best_safe_state.pt"
 REC_CKPT_PATH   = BASE_DIR / "models" / "recognition_tcn_attention_best.pt"
 LABEL_MAP_PATH  = BASE_DIR / "manifests" / "recognition_label_map_with_split_counts.csv"
