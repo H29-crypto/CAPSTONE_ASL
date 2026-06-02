@@ -28,3 +28,10 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
+
+# Large model checkpoints (>100 MB — store on Google Drive separately)
+adaptsign/weights/*.pt
+corrnet/weights/*.pt
+
+# Collected training data (local only)
+corrnet/data/pseudo_labels/
