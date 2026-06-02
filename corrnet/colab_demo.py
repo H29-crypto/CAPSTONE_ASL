@@ -265,9 +265,9 @@ def build_interface(models: dict, gloss_dict: dict, device: torch.device):
             "`MINUS DREI GRAD`  |  `WOCHENENDE SONNE FREUNDLICH`\n\n"
             "Stand in the portrait zone (upper body, frontal), plain background."
         ),
-        allow_flagging="never",
+        flagging_mode="never",
     )
-    demo.launch(share=True, server_port=7860)
+    demo.launch(share=True)  # let Gradio pick a free port automatically
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
