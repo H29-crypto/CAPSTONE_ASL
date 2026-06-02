@@ -19,16 +19,19 @@ CELL 2 — mount Drive & run:
     from google.colab import drive
     drive.mount('/content/drive')
 
-    import sys
-    sys.path.insert(0, '/content/CAPSTONE_ASL/corrnet')
-
-    import corrnet.colab_demo as d
+    import sys, importlib.util
     from pathlib import Path
+    sys.path.insert(0, '/content/CAPSTONE_ASL/corrnet')
+    sys.path.insert(0, '/content/CAPSTONE_ASL/adaptsign')
 
-    # Paths to your checkpoints on Google Drive
+    spec = importlib.util.spec_from_file_location(
+        'colab_demo', '/content/CAPSTONE_ASL/corrnet/colab_demo.py')
+    d = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(d)
+
+    # Update these paths to where your checkpoints are on Drive
     d.ADAPTSIGN_CKPT = Path('/content/drive/MyDrive/phoenix2014-T_best.pt')
     d.CORRNET_CKPT   = Path('/content/drive/MyDrive/corrnet_phoenix2014T.pt')
-
     d.main()
 """
 from __future__ import annotations
