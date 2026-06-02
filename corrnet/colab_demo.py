@@ -1,95 +1,178 @@
 """
-colab_demo.py — CorrNet German Sign Language Demo for Google Colab (T4 GPU)
-============================================================================
-Run this in a Colab notebook cell:
+colab_demo.py — Sign Language Demo for Google Colab (T4 GPU)
+=============================================================
+Supports two models selectable from a Gradio dropdown:
+  • AdaptSign  — ViT-B/16 + BiLSTM + CTC  (17.6% WER, best accuracy)
+  • CorrNet    — ResNet18 + BiLSTM + CTC   (21%  WER, lighter model)
 
-    !python corrnet/colab_demo.py
+Both run at ~0.2-0.3 s/sign on T4 GPU.
 
-Or paste each SECTION into separate cells.
+── Colab setup (paste each block into a separate cell) ──────────────────────
 
-Setup (run once):
-    !pip install -q gradio opencv-python-headless torch torchvision
+CELL 1 — clone & install:
+    !git clone https://github.com/H29-crypto/CAPSTONE_ASL.git
+    %cd CAPSTONE_ASL
+    !pip install -q gradio opencv-python-headless
+    !pip install -q ctcdecode   # beam search — compiles on Linux (~3 min)
 
-Checkpoint (upload corrnet_phoenix2014T.pt to Google Drive, then):
+CELL 2 — mount Drive & run:
     from google.colab import drive
     drive.mount('/content/drive')
-    # Set CKPT_PATH below to your Drive path, e.g.
-    # /content/drive/MyDrive/corrnet_phoenix2014T.pt
+
+    import sys
+    sys.path.insert(0, '/content/CAPSTONE_ASL/corrnet')
+
+    import corrnet.colab_demo as d
+    from pathlib import Path
+
+    # Paths to your checkpoints on Google Drive
+    d.ADAPTSIGN_CKPT = Path('/content/drive/MyDrive/phoenix2014-T_best.pt')
+    d.CORRNET_CKPT   = Path('/content/drive/MyDrive/corrnet_phoenix2014T.pt')
+
+    d.main()
 """
 from __future__ import annotations
 
-# ── SECTION 1: Setup ──────────────────────────────────────────────────────────
 import sys
-import os
 import time
-import tempfile
 from pathlib import Path
+from collections import OrderedDict
 
-# Mock ctcdecode (Linux wheel is not available on Colab's default env)
+# ── ctcdecode — real on Linux Colab, mocked elsewhere ─────────────────────────
 try:
     import ctcdecode
+    BEAM_SEARCH_AVAILABLE = True
 except Exception:
     import unittest.mock
     sys.modules["ctcdecode"] = unittest.mock.MagicMock()
+    BEAM_SEARCH_AVAILABLE = False
 
 import cv2
 import numpy as np
 import torch
 
-# ── SECTION 2: Paths ──────────────────────────────────────────────────────────
-# When running inside the cloned repo from Colab:
-#   /content/CAPSTONE_ASL_LOCAL/corrnet/colab_demo.py
-# Adjust CKPT_PATH if your checkpoint is on Google Drive.
-
-_HERE        = Path(__file__).resolve().parent          # corrnet/
-_ROOT        = _HERE.parent                             # project root
-CKPT_PATH    = _HERE / "weights" / "corrnet_phoenix2014T.pt"
-DICT_PATH    = _HERE / "preprocess" / "phoenix2014-T" / "gloss_dict.npy"
-GLOSS2TEXT   = _HERE / "gloss_to_text.py"
-
-# Override checkpoint path here if on Drive:
-# CKPT_PATH = Path("/content/drive/MyDrive/corrnet_phoenix2014T.pt")
+# ── Paths (overridden from notebook cells) ────────────────────────────────────
+_HERE          = Path(__file__).resolve().parent       # corrnet/
+_ROOT          = _HERE.parent
+ADAPTSIGN_CKPT = _ROOT / "adaptsign" / "weights" / "phoenix2014-T_best.pt"
+CORRNET_CKPT   = _HERE / "weights"   / "corrnet_phoenix2014T.pt"
+DICT_PATH      = _HERE / "preprocess" / "phoenix2014-T" / "gloss_dict.npy"
 
 sys.path.insert(0, str(_HERE))
+sys.path.insert(0, str(_ROOT / "adaptsign"))
 
 # Load gloss_to_text without polluting sys.path
 import importlib.util as _ilu
-_spec = _ilu.spec_from_file_location("gloss_to_text", GLOSS2TEXT)
-_mod  = _ilu.module_from_spec(_spec)
-_spec.loader.exec_module(_mod)
-glosses_to_german = _mod.glosses_to_german
-del _ilu, _spec, _mod
+_s = _ilu.spec_from_file_location("gloss_to_text", _HERE / "gloss_to_text.py")
+_m = _ilu.module_from_spec(_s); _s.loader.exec_module(_m)
+glosses_to_german = _m.glosses_to_german
+del _ilu, _s, _m
 
-# ── SECTION 3: Model ──────────────────────────────────────────────────────────
-SUBSAMPLE_STEP = 3   # keep every 3rd frame → ~33 frames from a 4s clip
-TARGET_FPS     = 25
+SUBSAMPLE_STEP = 3   # 100 raw frames → 33 fed to model
 
-def _device():
+# ── Device ────────────────────────────────────────────────────────────────────
+def get_device() -> torch.device:
     if torch.cuda.is_available():
-        name = torch.cuda.get_device_name(0)
-        print(f"  GPU: {name}")
+        print(f"  GPU : {torch.cuda.get_device_name(0)}")
         return torch.device("cuda")
-    print("  No GPU found — running on CPU (slower)")
+    print("  CPU mode (slower — connect a T4 runtime for best speed)")
     return torch.device("cpu")
 
 
+# ── Beam search decoder ───────────────────────────────────────────────────────
+class BeamDecoder:
+    """CTC beam search using ctcdecode when available, greedy fallback."""
+
+    def __init__(self, gloss_dict: dict, beam_width: int = 5):
+        self.i2g       = {v[0]: k for k, v in gloss_dict.items()}
+        self.blank_id  = 0
+        self.beam_width = beam_width
+        labels = [""] + [self.i2g.get(i, "") for i in range(1, len(gloss_dict) + 1)]
+
+        if BEAM_SEARCH_AVAILABLE:
+            self._decoder = ctcdecode.CTCBeamDecoder(
+                labels,
+                beam_width=beam_width,
+                blank_id=0,
+                log_probs_input=False,
+            )
+            self._mode = "beam"
+        else:
+            self._mode = "greedy"
+
+    def decode(self, logits: torch.Tensor, length: int):
+        """
+        logits : (T, C) — raw (not log-softmax) frame-level scores
+        Returns : (glosses, confidences)
+        """
+        if self._mode == "beam":
+            probs = torch.softmax(logits[:length].unsqueeze(0), dim=-1)  # (1,T,C)
+            beam_results, _, _, out_len = self._decoder.decode(probs)
+            ids  = beam_results[0][0][:out_len[0][0]].tolist()
+            confs = [1.0] * len(ids)
+        else:
+            ids, confs = self._greedy(logits, length)
+
+        glosses = [self.i2g.get(i, f"<{i}>") for i in ids]
+        return glosses, confs
+
+    def _greedy(self, logits, length):
+        sm   = torch.softmax(logits[:length], dim=-1)
+        idxs = logits[:length].argmax(dim=-1).tolist()
+        seq, prev, rs, rn = [], None, 0.0, 0
+        for pos, idx in enumerate(idxs):
+            if idx != prev:
+                if prev is not None and prev != self.blank_id and seq:
+                    g, p, _ = seq[-1]; seq[-1] = (g, p, rs / max(rn, 1))
+                prev, rs, rn = idx, 0.0, 0
+                if idx != self.blank_id:
+                    seq.append((idx, len(seq), 0.0))
+            if idx != self.blank_id:
+                rs += float(sm[pos, idx]); rn += 1
+        if prev and prev != self.blank_id and seq:
+            g, p, _ = seq[-1]; seq[-1] = (g, p, rs / max(rn, 1))
+        ids   = [x[0] for x in seq]
+        confs = [x[2] for x in seq]
+        return ids, confs
+
+
+# ── Model loading ─────────────────────────────────────────────────────────────
+def load_adaptsign(ckpt_path: Path, gloss_dict: dict, device: torch.device):
+    from slr_network import SLRModel
+    model = SLRModel(
+        num_classes=len(gloss_dict) + 1, c2d_type="ViT-B/16", conv_type=2,
+        use_bn=True, hidden_size=1024, gloss_dict=gloss_dict,
+        loss_weights={"SeqCTC": 1.0}, weight_norm=True, share_classifier=True,
+    )
+    ckpt = torch.load(str(ckpt_path), map_location="cpu", weights_only=False)
+    sd   = ckpt.get("model_state_dict", ckpt)
+    sd   = OrderedDict([(k.replace(".module", ""), v) for k, v in sd.items()])
+    model.load_state_dict(sd, strict=True)
+    return model.to(device).eval()
+
+
 def load_corrnet(ckpt_path: Path, gloss_dict: dict, device: torch.device):
-    from collections import OrderedDict
     from corrnet_webcam import load_model
     model = load_model(ckpt_path, gloss_dict)
-    model = model.to(device)
-    try:
-        model = torch.compile(model, backend="eager")
-        print("  torch.compile enabled")
-    except Exception:
-        pass
-    model.eval()
-    return model
+    return model.to(device).eval()
 
 
-def extract_frames(video_path: str, max_frames: int = 100) -> list[np.ndarray]:
-    """Read an MP4/WebM from disk → list of RGB numpy arrays."""
-    cap = cv2.VideoCapture(video_path)
+# ── Frame extraction ──────────────────────────────────────────────────────────
+def _prep_frame_adaptsign(rgb: np.ndarray) -> torch.Tensor:
+    """Portrait-crop then resize to 256×256, centre-crop 224×224, /127.5-1."""
+    h, w = rgb.shape[:2]
+    tw = int(h * 210 / 260)
+    if tw < w:
+        x0 = (w - tw) // 2
+        rgb = rgb[:, x0:x0 + tw]
+    img = cv2.resize(rgb, (256, 256), interpolation=cv2.INTER_LINEAR)
+    s   = (256 - 224) // 2
+    img = img[s:s+224, s:s+224]
+    return torch.from_numpy(img).float().permute(2, 0, 1) / 127.5 - 1.0
+
+
+def extract_frames(video_path: str, max_frames: int = 100) -> list:
+    cap    = cv2.VideoCapture(video_path)
     frames = []
     while len(frames) < max_frames:
         ret, frame = cap.read()
@@ -100,101 +183,143 @@ def extract_frames(video_path: str, max_frames: int = 100) -> list[np.ndarray]:
     return frames
 
 
+# ── Inference ─────────────────────────────────────────────────────────────────
 @torch.no_grad()
-def run_inference(model, frames: list, device: torch.device):
-    # corrnet_webcam.run_inference already handles subsampling internally —
-    # don't subsample here too or we'd double-subsample (100→33→11 frames).
-    from corrnet_webcam import run_inference as _infer
+def infer_adaptsign(model, decoder, frames: list, device: torch.device):
     if not frames:
         return [], []
-    return _infer(model, frames, device)
+    sampled  = frames[::SUBSAMPLE_STEP]
+    tensors  = [_prep_frame_adaptsign(f) for f in sampled]
+    imgs     = torch.stack(tensors).unsqueeze(0).to(device)
+    lengths  = torch.tensor([len(sampled)], dtype=torch.long).to(device)
+    out      = model(imgs, lengths)
+    sents    = out.get("recognized_sents", [[]])
+    if sents and sents[0]:
+        glosses = [x[0] for x in sents[0]]
+        confs   = [x[2] if len(x) > 2 else 1.0 for x in sents[0]]
+        return glosses, confs
+    return [], []
 
 
-# ── SECTION 4: Gradio interface ───────────────────────────────────────────────
+@torch.no_grad()
+def infer_corrnet(model, frames: list, device: torch.device):
+    from corrnet_webcam import run_inference
+    return run_inference(model, frames, device)
 
-def build_interface(model, gloss_dict: dict, device: torch.device):
+
+# ── Gradio ────────────────────────────────────────────────────────────────────
+def build_interface(models: dict, gloss_dict: dict, device: torch.device):
     try:
         import gradio as gr
     except ImportError:
-        print("Gradio not installed. Run:  pip install gradio")
-        return
+        print("Run:  pip install gradio"); return
 
-    def predict(video_path):
+    model_names = list(models.keys())
+
+    def predict(video_path, model_name):
         if video_path is None:
-            return "No video received.", "", "—"
+            return "No video received.", "", "", "—"
 
-        t0 = time.time()
+        t0     = time.time()
         frames = extract_frames(video_path)
         if len(frames) < 5:
-            return "Clip too short — sign for at least 1 second.", "", "—"
+            return "Clip too short — sign for at least 1 second.", "", "", "—"
 
-        glosses, confs = run_inference(model, frames, device)
+        m = models[model_name]
+        if model_name == "AdaptSign (ViT-B/16) — best WER":
+            glosses, confs = infer_adaptsign(m["model"], m["decoder"], frames, device)
+        else:
+            glosses, confs = infer_corrnet(m["model"], frames, device)
+
         elapsed = time.time() - t0
 
         if not glosses:
-            return "No sign detected — try again.", "", f"{elapsed:.1f}s"
+            return "No sign detected — try again.", "", "", f"{elapsed:.2f}s"
 
         german  = glosses_to_german(glosses, add_period=True) or " ".join(glosses)
-        raw     = "  ".join(
-            f"{g} ({c*100:.0f}%)" for g, c in zip(glosses, confs)
-        )
-        timing  = (f"{elapsed:.1f}s  |  {len(frames)} frames → "
+        raw     = "  |  ".join(f"{g} {c*100:.0f}%" for g, c in zip(glosses, confs))
+        conf_avg = sum(confs) / len(confs) * 100 if confs else 0
+        timing  = (f"{elapsed:.2f}s  |  {len(frames)} frames → "
                    f"{len(frames[::SUBSAMPLE_STEP])} sampled  |  "
-                   f"device: {device.type.upper()}")
+                   f"avg conf {conf_avg:.0f}%  |  {device.type.upper()}")
+
         return german, raw, timing
 
     demo = gr.Interface(
         fn=predict,
-        inputs=gr.Video(
-            sources=["webcam", "upload"],
-            label="Record or upload a signing clip (2–5 s)",
-        ),
+        inputs=[
+            gr.Video(sources=["webcam", "upload"],
+                     label="Record or upload a signing clip (2–5 s)"),
+            gr.Dropdown(choices=model_names, value=model_names[0],
+                        label="Model"),
+        ],
         outputs=[
             gr.Textbox(label="German translation", lines=2),
-            gr.Textbox(label="Raw glosses + confidence", lines=2),
+            gr.Textbox(label="Glosses + confidence", lines=2),
             gr.Textbox(label="Timing", lines=1),
         ],
-        title="German Sign Language — CorrNet (Phoenix-2014-T)",
+        title="German Sign Language Recognition — Phoenix-2014-T",
         description=(
-            "**How to use:**\n"
-            "1. Click *Record from webcam* and sign a short DGS weather phrase (2–5 s)\n"
-            "2. Click *Submit* — CorrNet runs on the GPU and translates to German\n\n"
-            "**Good phrases to try:** `HEUTE REGEN KOMMEN`  "
-            "`MORGEN NORD WIND STARK`  `MINUS DREI GRAD`\n\n"
-            "**Tip:** Stand in the portrait crop zone, upper body visible, plain background."
+            "**Good phrases to try (DGS weather glosses):**  \n"
+            "`HEUTE REGEN KOMMEN`  |  `MORGEN NORD WIND STARK`  |  "
+            "`MINUS DREI GRAD`  |  `WOCHENENDE SONNE FREUNDLICH`\n\n"
+            "Stand in the portrait zone (upper body, frontal), plain background."
         ),
-        examples=None,
         allow_flagging="never",
     )
-
-    # share=True gives a public URL valid for 72 h (needed in Colab)
     demo.launch(share=True, server_port=7860)
 
 
-# ── SECTION 5: Main ───────────────────────────────────────────────────────────
-
+# ── Main ──────────────────────────────────────────────────────────────────────
 def main():
-    print("\n" + "="*60)
-    print("  CorrNet German SL Demo — Colab Edition")
-    print("="*60)
+    print("\n" + "="*62)
+    print("  Sign Language Demo — Colab Edition")
+    print(f"  Beam search : {'ON (ctcdecode)' if BEAM_SEARCH_AVAILABLE else 'OFF (greedy — pip install ctcdecode)'}")
+    print("="*62)
 
-    for label, path in [("Checkpoint", CKPT_PATH), ("Gloss dict", DICT_PATH)]:
-        if not path.exists():
-            print(f"\n[ERROR] {label} not found: {path}")
-            print("  Upload corrnet_phoenix2014T.pt to Google Drive and set CKPT_PATH.")
-            return
-
-    device     = _device()
+    device     = get_device()
     gloss_dict = np.load(str(DICT_PATH), allow_pickle=True).item()
-    print(f"  Vocabulary : {len(gloss_dict)} Phoenix glosses")
+    print(f"  Vocabulary : {len(gloss_dict)} Phoenix glosses\n")
 
-    print("  Loading CorrNet (ResNet18) …")
-    model = load_corrnet(CKPT_PATH, gloss_dict, device)
-    params = sum(p.numel() for p in model.parameters())
-    print(f"  Model ready : {params:,} params")
+    models = {}
 
-    print("\n  Launching Gradio interface …")
-    build_interface(model, gloss_dict, device)
+    if ADAPTSIGN_CKPT.exists():
+        print("  Loading AdaptSign (ViT-B/16) ...")
+        m = load_adaptsign(ADAPTSIGN_CKPT, gloss_dict, device)
+        try:
+            m = torch.compile(m, backend="eager")
+        except Exception:
+            pass
+        models["AdaptSign (ViT-B/16) — best WER"] = {
+            "model":   m,
+            "decoder": BeamDecoder(gloss_dict, beam_width=5),
+        }
+        print(f"  AdaptSign ready  ({sum(p.numel() for p in m.parameters()):,} params)\n")
+    else:
+        print(f"  [SKIP] AdaptSign checkpoint not found: {ADAPTSIGN_CKPT}\n"
+              "         Set d.ADAPTSIGN_CKPT = Path('/content/drive/...')\n")
+
+    if CORRNET_CKPT.exists():
+        print("  Loading CorrNet (ResNet18) ...")
+        from corrnet_webcam import load_model
+        m = load_model(CORRNET_CKPT, gloss_dict)
+        m = m.to(device)
+        try:
+            m = torch.compile(m, backend="eager")
+        except Exception:
+            pass
+        models["CorrNet (ResNet18) — faster load"] = {"model": m}
+        print(f"  CorrNet ready  ({sum(p.numel() for p in m.parameters()):,} params)\n")
+    else:
+        print(f"  [SKIP] CorrNet checkpoint not found: {CORRNET_CKPT}\n"
+              "         Set d.CORRNET_CKPT = Path('/content/drive/...')\n")
+
+    if not models:
+        print("[ERROR] No checkpoints found. Set d.ADAPTSIGN_CKPT / d.CORRNET_CKPT.")
+        return
+
+    print("  Launching Gradio ...")
+    build_interface(models, gloss_dict, device)
 
 
 if __name__ == "__main__":
