@@ -102,11 +102,12 @@ def extract_frames(video_path: str, max_frames: int = 100) -> list[np.ndarray]:
 
 @torch.no_grad()
 def run_inference(model, frames: list, device: torch.device):
-    from corrnet_webcam import pad_and_make_batch, run_inference as _infer
+    # corrnet_webcam.run_inference already handles subsampling internally —
+    # don't subsample here too or we'd double-subsample (100→33→11 frames).
+    from corrnet_webcam import run_inference as _infer
     if not frames:
         return [], []
-    sampled = frames[::SUBSAMPLE_STEP]
-    return _infer(model, sampled, device)
+    return _infer(model, frames, device)
 
 
 # ── SECTION 4: Gradio interface ───────────────────────────────────────────────
