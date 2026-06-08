@@ -428,12 +428,70 @@ def make_ordered_labels(T, seg):
 # FULL INFERENCE PIPELINE
 # ─────────────────────────────────────────────────────────────
 
+def _mirror_pts(pts):
+    """
+    Flip the normalised landmark array left↔right.
+    pts shape: (T, 49, 3) — [0:7] pose, [7:28] left hand, [28:49] right hand.
+    Mirroring: negate x for all points, then swap the two hand blocks.
+    """
+    m = pts.copy()
+    m[:, :, 0] *= -1
+    temp          = m[:, 7:28, :].copy()
+    m[:, 7:28, :] = m[:, 28:49, :]
+    m[:, 28:49,:] = temp
+    return m
+
+
+def _enable_dropout(model):
+    """Turn on only Dropout layers (leaves BatchNorm in eval mode)."""
+    for mod in model.modules():
+        if isinstance(mod, nn.Dropout):
+            mod.train()
+
+
+def _rec_probs(X, rec_mean, rec_std, ordered, crop_start, crop_end,
+               rec_model, device, n_mc=15):
+    """
+    Normalise features, append phase one-hot, run recogniser.
+
+    MC Dropout: dropout is kept active for n_mc forward passes and the
+    resulting softmax distributions are averaged — reduces prediction
+    variance without any retraining.
+    """
+    X_crop  = ((X[crop_start: crop_end + 1] - rec_mean) / rec_std).astype(np.float32)
+    X_crop[~np.isfinite(X_crop)] = 0.0
+    ph_crop = np.clip(ordered[crop_start: crop_end + 1], 0, 3).astype(np.int64)
+    X_final = np.concatenate([X_crop, np.eye(4, dtype=np.float32)[ph_crop]], axis=1)
+
+    T_act = X_final.shape[0]
+    xt    = torch.tensor(X_final, dtype=torch.float32).unsqueeze(0).to(device)
+    msk   = torch.ones(1, T_act, dtype=torch.bool).to(device)
+
+    rec_model.eval()
+    _enable_dropout(rec_model)          # activate dropout only
+    probs_mc = []
+    with torch.no_grad():
+        for _ in range(n_mc):
+            logits, _ = rec_model(xt, msk)
+            probs_mc.append(torch.softmax(logits, dim=-1).squeeze(0).cpu().numpy())
+    rec_model.eval()                    # restore full eval (dropout off)
+
+    return np.mean(probs_mc, axis=0).astype(np.float32)
+
+
 def run_pipeline(pose_seq, lh_seq, rh_seq, pose_mask, lh_mask, rh_mask,
                  phase_model, phase_mean, phase_std,
                  rec_model,   rec_mean,   rec_std,
-                 device):
+                 device, tta_mirror=True, n_mc=15):
     """
     Returns: probs (100,) float32, seg_status str, active_start int, active_end int
+
+    Improvements applied at inference time (no retraining):
+      1. Stroke-only crop  — feeds only the stroke phase to the recogniser
+                             (falls back to full active region if stroke is invalid).
+      2. MC Dropout        — n_mc stochastic forward passes, averaged.
+      3. Confidence-weighted TTA — mirrored pass weighted by its peak confidence
+                             so the more certain view dominates.
     """
     T = pose_seq.shape[0]
 
@@ -467,17 +525,41 @@ def run_pipeline(pose_seq, lh_seq, rh_seq, pose_mask, lh_mask, rh_mask,
     flag       = seg["segment_quality_flag"]
     seg_status = f"{seg['segment_status']}:{flag}" if flag else seg["segment_status"]
 
-    X_crop  = ((X[active_start: active_end + 1] - rec_mean) / rec_std).astype(np.float32)
-    X_crop[~np.isfinite(X_crop)] = 0.0
-    ph_crop = np.clip(ordered[active_start: active_end + 1], 0, 3).astype(np.int64)
-    X_final = np.concatenate([X_crop, np.eye(4, dtype=np.float32)[ph_crop]], axis=1)
+    # ── 1. Stroke-only crop ───────────────────────────────────
+    ss, se = seg.get("stroke_start", -1), seg.get("stroke_end", -1)
+    if (seg["segment_status"] != "reject"
+            and ss >= 0 and se >= ss
+            and (se - ss + 1) >= 6):
+        crop_start, crop_end = ss, se
+    else:
+        crop_start, crop_end = active_start, active_end
 
-    T_act = X_final.shape[0]
-    xt2   = torch.tensor(X_final, dtype=torch.float32).unsqueeze(0).to(device)
-    msk   = torch.ones(1, T_act, dtype=torch.bool).to(device)
-    with torch.no_grad():
-        logits, _ = rec_model(xt2, msk)
-        probs100  = torch.softmax(logits, dim=-1).squeeze(0).cpu().numpy()
+    # ── 2. MC Dropout (original pass) ────────────────────────
+    probs100 = _rec_probs(X, rec_mean, rec_std, ordered,
+                          crop_start, crop_end, rec_model, device, n_mc)
+
+    # ── 3. Confidence-weighted TTA (mirrored pass) ────────────
+    if tta_mirror:
+        pts_m = _mirror_pts(pts.reshape(T, 49, 3))
+        pos_m = pts_m.reshape(T, -1).astype(np.float32)
+        vel_m, acc_m, gs_m, hs_m = compute_motion_features(pts_m, pos_m)
+        psp_m = compute_phase_speed(pts_m, pos_m, gs_m, hs_m)
+
+        X_m = np.concatenate([pos_m, vel_m, acc_m,
+                               gs_m.reshape(-1, 1), hs_m.reshape(-1, 1),
+                               psp_m.reshape(-1, 1)],
+                              axis=1).astype(np.float32)
+        X_m[~np.isfinite(X_m)] = 0.0
+
+        probs100_m = _rec_probs(X_m, rec_mean, rec_std, ordered,
+                                crop_start, crop_end, rec_model, device, n_mc)
+
+        w1 = float(np.max(probs100))
+        w2 = float(np.max(probs100_m))
+        total = w1 + w2
+        probs100 = ((w1 * probs100 + w2 * probs100_m) / total
+                    if total > 1e-8
+                    else 0.5 * probs100 + 0.5 * probs100_m)
 
     return probs100, seg_status, active_start, active_end
 

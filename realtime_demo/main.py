@@ -1,13 +1,9 @@
 """
-main.py — Sign Language Recognition System  (Unified Launcher)
---------------------------------------------------------------
+main.py — Sign Language Recognition System  (Isolated ASL)
+----------------------------------------------------------
   [1]  Isolated Sign Mode (ASL)
        Record a 2-second window → Top-5 predictions.
        Model: Phase-Aware TCN trained on ASL vocabulary.
-
-  [2]  Continuous Translation Mode (German SL)
-       Sign freely → live running gloss sentence.
-       Model: AdaptSign ViT-B/16 trained on PHOENIX-2014-T.
 
 Usage:
   python realtime_demo/main.py
@@ -23,22 +19,18 @@ sys.path.insert(0, str(Path(__file__).parent))
 # BANNER
 # ─────────────────────────────────────────────────────────────
 
-BANNER = r"""
-  ╔══════════════════════════════════════════════════════════╗
-  ║          Sign Language Recognition System                ║
-  ║                   Capstone Project                       ║
-  ╠══════════════════════════════════════════════════════════╣
-  ║                                                          ║
-  ║   [1]   Isolated Sign Mode  (ASL)                        ║
-  ║         Press R to record one sign → Top-5 predictions   ║
-  ║                                                          ║
-  ║   [2]   Continuous German SL  (DGS — CorrNet)            ║
-  ║         Auto-detects signing → translated German text    ║
-  ║         ~3-5 s per sign on CPU  (ResNet18 backbone)      ║
-  ║                                                          ║
-  ║   [Q]   Quit                                             ║
-  ║                                                          ║
-  ╚══════════════════════════════════════════════════════════╝
+BANNER = """
+  +----------------------------------------------------------+
+  |          Sign Language Recognition System                |
+  |                   Capstone Project                       |
+  +----------------------------------------------------------+
+  |                                                          |
+  |   [1]   Isolated Sign Mode  (ASL)                        |
+  |         Press R to record one sign -> Top-5 predictions  |
+  |                                                          |
+  |   [Q]   Quit                                             |
+  |                                                          |
+  +----------------------------------------------------------+
 """
 
 DIVIDER = "  " + "─" * 56
@@ -46,7 +38,7 @@ DIVIDER = "  " + "─" * 56
 
 def show_menu() -> str:
     print(BANNER)
-    return input("  Select mode (1 / 2 / Q): ").strip().lower()
+    return input("  Select mode (1 / Q): ").strip().lower()
 
 
 # ─────────────────────────────────────────────────────────────
@@ -66,24 +58,6 @@ def main():
                 run_isolated()
             except Exception as exc:
                 print(f"\n  [ERROR in Isolated Mode] {exc}\n")
-
-        elif choice == "2":
-            print(f"\n{DIVIDER}")
-            print("  Launching Continuous German SL (CorrNet) ...")
-            print("  Loading ResNet18 model — please wait ~20 s ...")
-            print(f"{DIVIDER}\n")
-            try:
-                import importlib.util, pathlib
-                spec = importlib.util.spec_from_file_location(
-                    "corrnet_webcam",
-                    pathlib.Path(__file__).resolve().parent.parent
-                    / "corrnet" / "corrnet_webcam.py",
-                )
-                mod = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(mod)
-                mod.main()
-            except Exception as exc:
-                print(f"\n  [ERROR in German SL Mode] {exc}\n")
 
         elif choice in ("q", "quit", "exit", ""):
             print("\n  Goodbye!\n")
