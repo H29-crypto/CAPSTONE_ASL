@@ -1,174 +1,411 @@
-# Phase-Aware ASL Sign Recognition
+# Keypoint-Centric Sign Language Recognition
 
-A keypoint-based isolated American Sign Language recognition pipeline that
-uses phase-aware temporal segmentation (preparation → stroke → retraction)
-to improve sign classification.
+A capstone project on **sign language recognition (SLR)** spanning both of its
+canonical settings, unified by a keypoint-centric methodology and a strict
+controlled-comparison discipline:
 
-This is a capstone project (Bahçeşehir University, Faculty of Engineering
-and Natural Sciences, Department of AI Engineering, 2026).
+- **Part I — Isolated ASL Recognition (phase-aware):** classify a single sign
+  from a short clip, using MediaPipe keypoints and an explicit model of sign
+  *phonological phase* (preparation → stroke → retraction).
+- **Part II — Continuous Sign Language Recognition (multimodal):** transcribe an
+  unsegmented signing stream into a gloss sequence on the PHOENIX-2014 benchmark,
+  fusing frozen I3D video features with HRNet keypoints under CTC.
 
-## Overview
+> **Central finding.** Across both regimes, **skeleton keypoints carry the
+> dominant signal**, and structural augmentations (phase features in isolated; a
+> fused video stream with auxiliary supervision in continuous) yield consistent
+> but modest, honestly-characterized gains.
 
-The system recognizes individual ASL signs from video clips using:
+**Faculty of Engineering and Natural Sciences — Department of Artificial
+Intelligence Engineering**
+Authors: Hamdi Alakkad, Metin Yağız Bakış, Yaser Hadri, Aria Sokhangoo
+Advisors: Prof. Fatih Kahraman, Asst. Prof. Arezoo Sadeghzadeh
 
-1. **MediaPipe** keypoint extraction (pose + both hands, 49 landmarks/frame)
-2. A **Phase Detection TCN** that classifies each frame into one of four
-   phonological phases (background, preparation, stroke, retraction)
-3. A **Phase-Aware Recognition TCN with attention** that consumes the
-   extracted active segment and predicts one of 100 sign classes
+---
 
-The phase-aware design is grounded in sign language phonology
-(Liddell & Johnson 1989; Brentari 1998).
+## Table of Contents
+- [Results at a glance](#results-at-a-glance)
+- [Part I — Isolated ASL Recognition](#part-i--isolated-asl-recognition)
+- [Part II — Continuous Sign Language Recognition](#part-ii--continuous-sign-language-recognition)
+- [Repository structure](#repository-structure)
+- [Installation](#installation)
+- [Datasets](#datasets)
+- [Reproducing the results](#reproducing-the-results)
+- [Real-time demo](#real-time-demo)
+- [Key design decisions and honest limitations](#key-design-decisions-and-honest-limitations)
+- [Citation and acknowledgements](#citation-and-acknowledgements)
+- [License](#license)
 
-## Results (signer-independent test set, 777 clips)
+---
 
-| Model                        | Top-1      | Top-5      | Macro F1  |
-|------------------------------|------------|------------|-----------|
-| Baseline (no phase one-hot)  | 67.95%     | 85.97%     | 0.6574    |
-| Phase-aware                  | 68.85%     | 87.00%     | 0.6695    |
-| **Δ phase-aware − baseline** | **+0.90%** | **+1.03%** | **+0.0120** |
+## Results at a glance
 
-Paired McNemar's test on top-1 predictions: p ≈ 0.50 — the improvement is
-consistent in direction but not statistically significant at this sample
-size. See the project report for the full methodology audit and limitations.
+### Part I — Isolated ASL (ASL Citizen, top-100 classes, 777 test samples)
 
-## Dataset
+| Model | Top-1 | Top-5 | Macro F1 |
+|---|---|---|---|
+| Baseline (no phase) | 67.95% | 85.97% | 0.6574 |
+| **Phase-aware** | **68.85%** | **87.00%** | **0.6695** |
 
-This project uses a top-100-class subset of **ASL Citizen** (Desai et al.,
-NeurIPS 2023), selected by training-set frequency.
+Phase-detection TCN: **91.1%** frame accuracy / **89.7%** macro-F1.
+Paired McNemar test: **p ≈ 0.50** — the +0.90-point gain is consistent in
+direction but **not statistically significant** at this sample size, and is
+reported as a promising signal rather than a breakthrough.
 
-| Split | Original | After phase-segmentation filter |
-|-------|---------:|--------------------------------:|
-| Train |    1,800 |                           1,215 |
-| Val   |      367 |                             242 |
-| Test  |    1,286 |                             777 |
+### Part II — Continuous CSLR (PHOENIX-2014, full official splits)
 
-The dataset itself is not redistributed with this repo. Download it from:
-<https://download.microsoft.com/download/b/8/8/b88c0bae-e6c1-43e1-8726-98cf5af36ca4/ASL_Citizen.zip>
+WER (%), greedy decoding, internal metric (lower is better):
+
+| Exp. | Streams | Dev WER | Test WER |
+|---|---|---|---|
+| E1 | Video only (frozen I3D) | 53.86 | 53.37 |
+| **E2** | **Keypoints only (HRNet)** | **44.06** | **44.71** |
+| E3 | Fusion (concat) | 49.19 | 47.86 |
+| E4 | Fusion + auxiliary CTC | 46.03 | 45.10 |
+
+**Keypoints beat generic video features by 8.66 test-WER points.** Naive fusion
+underperforms the best single stream because resolution alignment discards
+keypoint temporal detail; auxiliary CTC recovers 2.76 points but does not close
+the gap. See [limitations](#key-design-decisions-and-honest-limitations).
+
+> WER is computed with an internal, consistent implementation applied
+> identically to all experiments, so **relative** comparisons are valid. It is
+> **not** the official PHOENIX sclite metric, so absolute numbers are not
+> directly comparable to published leaderboards.
+
+---
+
+## Part I — Isolated ASL Recognition
+
+A four-stage, keypoint-based pipeline that exploits the three-phase phonological
+structure of signs.
+
+```
+ASL Citizen clip
+   │
+   ▼
+MediaPipe pose + both hands  →  49 landmarks (147-d positions)
+   │
+   ▼
+normalization + derivatives  →  444-d motion features / frame
+   │  (position, velocity, acceleration, global/hand/phase speed)
+   ▼
+Phase Detection TCN          →  per-frame phase
+   │  (weak velocity-derived pseudo-labels:
+   │   background / preparation / stroke / retraction)
+   │  91.1% acc · 89.7% macro-F1
+   ▼
+active-region extraction  +  4 ordered phase one-hots (→ 448-d)
+   │
+   ▼
+Recognition TCN + attention pooling
+   │
+   ▼
+softmax over 100 ASL classes
+```
+
+**Design notes.**
+- Phase labels are **weak pseudo-labels** from motion-peak heuristics on velocity
+  curves — not human linguistic annotations. The 91.1% phase accuracy measures
+  agreement with the heuristic, not with ground-truth phonology.
+- The baseline shares the *same* architecture and active-region crop, differing
+  only by the 4 phase one-hot features — a clean single-variable comparison.
+- The phase-quality filter excluded signs with multi-peak/oscillatory motion
+  (e.g., TWINS, COMB, PIPE), a documented bias toward simpler motion profiles.
+
+---
+
+## Part II — Continuous Sign Language Recognition
+
+A feature-space, two-stream multimodal CSLR system. Every visual/keypoint
+backbone is **frozen**, so the whole experiment ladder trains in minutes on a
+single GPU.
+
+```
+                 PHOENIX-2014 video (5,672 / 540 / 629 sentences)
+                          │
+        ┌─────────────────┴─────────────────┐
+        │                                   │
+   VIDEO STREAM                       KEYPOINT STREAM
+ I3D-R50 (frozen, Kinetics)        HRNet COCO-WholeBody (133 pts)
+ window 8, stride 4                 select 53 pts (hands + upper body)
+ → [T/4, 2048]                      → [T, 53×5 = 265], shoulder-normalized
+        │                                   │
+        │                        ┌──────────┴──────────┐
+        │                        │ resample to video   │  ← fusion-only step
+        │                        │ length (~215 → ~54)  │
+        │                        └──────────┬──────────┘
+   stream encoder                      stream encoder
+ (proj 512 + 2× Conv1d k5)         (proj 512 + 2× Conv1d k5)
+        │                                   │
+   (aux CTC head, E4 only)           (aux CTC head, E4 only)
+        └─────────────────┬─────────────────┘
+                          │
+                 FUSION (concatenation)
+                          │
+            SEQUENCE HEAD (BiLSTM, 2 × 512)
+                          │
+                    MAIN CTC HEAD
+                          │
+                greedy CTC decoding
+                          │
+        gloss sequence → WER (1,231-gloss vocabulary)
+```
+
+**Experiment ladder (matched conditions — one variable per row):**
+- **E1** video only · **E2** keypoints only (full frame rate, no resampling) ·
+  **E3** both streams, concat fusion · **E4** E3 + per-stream auxiliary CTC heads.
+- Identical encoder dims, sequence head, optimizer, schedule, augmentation, and
+  decoding across rows, so differences are attributable to the modality / fusion
+  / auxiliary-supervision factor alone.
+
+---
 
 ## Repository structure
 
 ```
-CAPSTONE_ASL/
-├── notebooks/
-│   ├── Feature.ipynb                                  # Keypoint extraction (MediaPipe Tasks API)
-│   └── Un.ipynb                                       # Full training pipeline (90 cells)
-├── weights/
-│   ├── phase_tcn_best_safe_state.pt                   # Trained Phase Detection TCN
-│   └── recognition_tcn_attention_best.pt              # Trained Recognition TCN + Attention
-├── assets/
-│   ├── hand_landmarker.task                           # MediaPipe hand landmark model
-│   └── pose_landmarker_full.task                      # MediaPipe pose landmark model
-├── data/
-│   └── recognition_label_map_with_split_counts.csv    # 100-class label map
-├── reports/
-│   ├── figures/                                       # fig_01–fig_06 (PNG)
-│   ├── report_text/                                   # 01_abstract.md – 07_conclusion.md
-│   ├── final_results_summary.json
-│   └── final_results_tables.md
-└── realtime_demo/
-    ├── demo.py                                        # Webcam record-one-sign demo
-    └── verify_pipeline.py                             # Offline checkpoint verification
+.
+├── README.md
+├── isolated/                        # Part I — phase-aware ASL (ASL Citizen)
+│   ├── notebooks/
+│   │   ├── Feature.ipynb            # MediaPipe keypoint extraction (Tasks API)
+│   │   └── Un.ipynb                 # full training pipeline
+│   ├── models/
+│   │   ├── phase_tcn_best_safe_state.pt
+│   │   └── recognition_tcn_attention_best.pt
+│   ├── manifests/
+│   │   └── recognition_label_map_with_split_counts.csv
+│   ├── reports/final_results/       # result tables + figures
+│   └── realtime_demo/
+│       ├── demo.py                  # webcam record-one-sign demo
+│       └── verify_pipeline.py       # offline checkpoint verification
+│
+├── continuous/                      # Part II — multimodal CSLR (PHOENIX-2014)
+│   ├── config.yaml                  # single source of truth (paths + hyperparams)
+│   ├── src/
+│   │   ├── vocab.py                 # corpus parsing + train-only vocabulary
+│   │   ├── data.py                  # feature dataset, alignment, augmentation
+│   │   ├── models.py                # stream encoders, fusion, BiLSTM, CTC heads
+│   │   ├── decode.py                # greedy CTC decode + WER (S/I/D)
+│   │   ├── train.py                 # training engine (resumable, dev-WER select)
+│   │   ├── utils.py                 # config/seed/path helpers
+│   │   └── official_eval_adapter.py # PHOENIX sclite binding (stub + instructions)
+│   └── notebooks/
+│       ├── 01_dataset_eval_check.ipynb
+│       ├── 02_dump_rgb_features_resumable.ipynb
+│       ├── 03_prepare_hrnet_keypoints.ipynb
+│       └── 04_ctc_sanity_check.ipynb
+│
+└── docs/
+    └── final_report.pdf
 ```
+
+---
 
 ## Installation
 
-Tested on Windows 10/11 with Python 3.10. Other platforms should work but
-have not been tested.
+Both parts use Python 3.10+ and PyTorch ≥ 2.0. They are developed primarily in
+Google Colab (single GPU) with Google Drive for persistent storage.
 
 ```bash
-# 1. Clone the repo
+# clone
 git clone https://github.com/H29-crypto/CAPSTONE_ASL.git
 cd CAPSTONE_ASL
 
-# 2. Create a virtual environment
-python -m venv .venv
+# (recommended) virtual environment
+python -m venv .venv && source .venv/bin/activate    # Windows: .venv\Scripts\activate
 
-# 3. Activate it
-# On Windows (PowerShell):
-.\.venv\Scripts\Activate.ps1
-# On Linux/macOS:
-source .venv/bin/activate
+# core dependencies
+pip install torch numpy pandas opencv-python matplotlib scipy pyyaml
 
-# 4. Install dependencies
-pip install -r requirements.txt
+# Part I (isolated): MediaPipe for landmark extraction + the webcam demo
+pip install mediapipe
+
+# Part II (continuous): PyTorchVideo for the frozen I3D feature extractor
+pip install pytorchvideo gdown
 ```
 
-On Windows, if PowerShell blocks activation:
+> **Note on environments.** The continuous pipeline runs entirely in Colab.
+> The Part I **webcam demo** is best run **locally** (VS Code, Python 3.10): Colab
+> has unreliable real-time camera access and dependency conflicts among
+> MediaPipe / TensorFlow / protobuf / NumPy.
 
-```powershell
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+---
+
+## Datasets
+
+Neither dataset is redistributed here. Download from the original sources.
+
+### Part I — ASL Citizen
+Community-sourced, signer-independent isolated-ASL dataset (Desai et al.,
+NeurIPS 2023). Full set: 83,401 videos, 2,731 classes, 52 signers. This project
+uses a **top-100-class subset** (by training frequency); reported results are on
+the **post-filter** split (1,215 train / 242 val / 777 test) after
+phase-segmentation quality filtering.
+
+- Project page / download: see the ASL Citizen release.
+
+### Part II — RWTH-PHOENIX-Weather 2014 (continuous, DGS)
+The standard gloss-annotated CSLR benchmark (Koller et al., 2015). **Full
+official multisigner splits** (5,672 / 540 / 629). The archive ships frames,
+annotations, and the official evaluation scripts — **no keypoints and no
+pretrained models** (keypoints are obtained separately, below).
+
+- `phoenix-2014.v3.tar.gz` from the RWTH PHOENIX page.
+
+### Part II — Keypoints (separate third-party artifact)
+PHOENIX does not include keypoints. We use **pre-extracted HRNet whole-body
+keypoints** released by the **MSKA** project (Guan et al., 2025): one file per
+split, 133-point COCO-WholeBody, per-frame, with confidences. We select 53
+points (upper body + both hands) and normalize them ourselves.
+
+```python
+import gdown
+gdown.download_folder(
+    "https://drive.google.com/drive/folders/1D_iVtqeARBLO7WcZCTGCAdHXkKqHfF9X",
+    output="data/keypoints_raw", quiet=False, use_cookies=False)
 ```
 
-## Running the demo
+---
 
-A working webcam is required.
+## Reproducing the results
+
+### Part I (isolated)
+1. Extract MediaPipe keypoints for the top-100 subset (`isolated/notebooks/Feature.ipynb`).
+2. Run the training pipeline (`isolated/notebooks/Un.ipynb`): motion-feature
+   construction and weak phase pseudo-labels → Phase Detection TCN →
+   active-region extraction → Recognition TCN (phase-aware **and** baseline).
+3. Result tables/figures are written under `isolated/reports/final_results/`.
+
+### Part II (continuous)
+All paths live in `continuous/config.yaml`; set them once.
+
+1. **Verify the dataset** (`01_dataset_eval_check.ipynb`) — confirm official
+   counts (5,672 / 540 / 629) and build the train-only vocabulary.
+2. **Extract video features** (`02_dump_rgb_features_resumable.ipynb`) — frozen
+   I3D, 8-frame windows, stride 4 → one `.npy` per sentence. Resumable.
+3. **Prepare keypoints** (`03_prepare_hrnet_keypoints.ipynb`) — select 53 points,
+   shoulder-normalize, add velocities, standardize with **train-only** stats.
+4. **Sanity check** (`04_ctc_sanity_check.ipynb`) — stream-alignment asserts,
+   `T ≥ 2L` CTC-feasibility check, one forward / CTC / greedy-decode pass.
+5. **Train any experiment** with a one-line call (each ≈ 30 min on a T4):
+
+```python
+from src.train import run_training
+
+run_training(cfg, ("rgb",),        "E1_rgb")                                    # video only
+run_training(cfg, ("kp",),         "E2_kp")                                     # keypoints only
+run_training(cfg, ("rgb","kp"),    "E3_fusion")                                 # concat fusion
+run_training(cfg, ("rgb","kp"),    "E4_aux", overrides={"model.aux_ctc": True}) # + aux CTC
+```
+
+6. **Evaluate on test once per model** — loads each checkpoint's own saved config
+   so it is scored with exactly the feature directories and dimensions it was
+   trained on.
+
+Training is fully **resumable**: every job checkpoints `best.pt` (by dev WER) and
+`last.pt` (latest epoch); re-running continues from the latest state.
+
+---
+
+## Real-time demo (Part I)
 
 ```bash
-python realtime_demo/demo.py
+cd isolated/realtime_demo
+python demo.py     # downloads MediaPipe model files on first launch
 ```
 
-Controls:
-- **R** — record a 2-second clip and predict the sign
-- **Q** — quit
+Press **R** to record a ~2-second clip; the pipeline extracts MediaPipe
+landmarks, runs the Phase TCN to find the active region, and returns the top
+prediction among 100 classes.
 
-On first run, the script downloads the two MediaPipe model files
-(`pose_landmarker_full.task` and `hand_landmarker.task`, ~17 MB total)
-into `assets/`.
+> The demo is **record-one-sign**, not continuous rolling-buffer: the model is
+> trained on isolated clips, so a clean recorded segment matches the training
+> distribution and gives stable predictions. There is no live demo for the
+> continuous (PHOENIX) model — it requires HRNet whole-body keypoints and outputs
+> DGS weather-domain glosses, both out of scope for a webcam.
 
-To verify the inference pipeline without a webcam — useful for confirming
-the checkpoints load correctly — run:
+---
 
-```bash
-python realtime_demo/verify_pipeline.py
+## Key design decisions and honest limitations
+
+This project deliberately reports negative and null results.
+
+- **Frozen features by design.** Both backbones (I3D, HRNet) are frozen; this is
+  a compute-budget choice (single free GPU) and sets a deliberate performance
+  ceiling. End-to-end PHOENIX systems (e.g., CorrNet, ≈19% WER) are not a
+  like-for-like comparison.
+- **Generic I3D, not sign-pretrained.** The planned sign-pretrained frontend was
+  unavailable, so Kinetics-I3D is used — which doubles as the "generic visual
+  features" control. This is part of *why* keypoints win so decisively.
+- **Fusion underperforms the best single stream (E3 < E2).** Aligning per-frame
+  keypoints to the coarser video stride (~215 → ~54 steps) discards the temporal
+  detail driving E2. Auxiliary CTC (E4) recovers part of it but not all. The
+  indicated fix — re-extracting video features at stride 2 — is future work.
+- **149 training sentences (2.6%) are CTC-infeasible at stride 4** (`T < 2L`) and
+  are neutralized via `zero_infinity`. Dev/test are unaffected.
+- **Internal WER, not official sclite.** Valid for the relative comparisons made
+  here; binding the official PHOENIX scripts is listed as future work.
+- **Raw 1,231-gloss vocabulary** (vs the ≈1,081 normalized vocabulary common in
+  the literature) is kept for internal consistency.
+- **Phase labels are weak pseudo-labels**, not linguistic ground truth; the
+  isolated +0.9% gain is not statistically significant (McNemar p ≈ 0.50).
+- **Signer protocols differ between parts:** ASL Citizen is signer-independent;
+  PHOENIX-2014 multisigner shares signers across splits (the standard, easier
+  protocol). Results are labeled accordingly and not over-claimed.
+
+**Future work.** Stride-2 video re-extraction + matched-resolution re-runs; bind
+the official PHOENIX evaluator and certify against a published checkpoint; beam
+search + a gloss language model; gated-fusion and Transformer-head ablations;
+cross-stream self-distillation; injecting phase posteriors into the continuous
+stream (bridging the two parts); human-annotated phases and a larger vocabulary
+for an adequately-powered isolated test.
+
+---
+
+## Citation and acknowledgements
+
+If you reference this work:
+
+```bibtex
+@misc{capstone_slr_2026,
+  title  = {Keypoint-Centric Sign Language Recognition: Phase-Aware Isolated
+            ASL Recognition and Multimodal Continuous Sign Language Recognition},
+  author = {Alakkad, Hamdi and Bak{\i}\c{s}, Metin Ya\u{g}{\i}z and Hadri, Yaser and
+            Sokhangoo, Aria},
+  year   = {2026},
+  note   = {Capstone Project, Department of Artificial Intelligence Engineering}
+}
 ```
 
-## Reproducing the training results
+**Datasets, models, and methods used:**
+- **ASL Citizen** — Desai et al., *ASL Citizen: A Community-Sourced Dataset for
+  Advancing Isolated Sign Language Recognition*, NeurIPS 2023.
+- **RWTH-PHOENIX-Weather 2014** — Koller et al., *Continuous sign language
+  recognition: Towards large vocabulary statistical recognition systems handling
+  multiple signers*, CVIU 2015.
+- **MSKA** (HRNet keypoints for PHOENIX) — Guan et al., *MSKA: Multi-stream
+  keypoint attention network for sign language recognition and translation*,
+  Pattern Recognition 2025.
+- **I3D** — Carreira & Zisserman, CVPR 2017; checkpoint via **PyTorchVideo**
+  (Fan et al., 2021), Kinetics-pretrained `i3d_r50`.
+- **HRNet** — Sun et al., CVPR 2019; **COCO-WholeBody** — Jin et al., ECCV 2020.
+- **MediaPipe** — Lugaresi et al., 2019.
+- **CTC** — Graves et al., ICML 2006.
+- **TCN** — Bai et al., 2018; **ED-TCN** — Lea et al., CVPR 2017.
+- **SAM-SLR** (keypoint-subset inspiration, Part I) — Jiang et al., CVPRW 2021.
+- **Sign phonology** — Liddell & Johnson (1989); Brentari (1998).
 
-Training is done in Google Colab using the two notebooks in `notebooks/`:
+This work uses only open-source software and publicly released, research-licensed
+datasets and checkpoints. No new human-subject data were collected. Gloss
+recognition is **not** translation; outputs are gloss sequences, and the system
+is intended to support — not replace — human interpreters.
 
-1. `Feature.ipynb` — extracts MediaPipe keypoints for the ASL Citizen
-   top-100 subset. Produces one `.npz` file per clip.
-2. `Un.ipynb` — the full training pipeline:
-   - **Cells 41–45**: motion feature construction and weak phase
-     pseudo-label generation
-   - **Cells 48–51**: Phase Detection TCN training and evaluation
-   - **Cells 52–53**: active-region segment extraction
-   - **Cells 56–62**: Recognition TCN training (phase-aware and baseline)
-
-A T4 GPU is sufficient. The full pipeline takes approximately 4–6 hours
-of total training compute.
-
-## Known limitations
-
-- The phase pseudo-labels are derived from a velocity-threshold heuristic,
-  not from human-annotated phase boundaries. The reported Phase TCN
-  accuracy of 91% measures agreement with these pseudo-labels, not with
-  linguistic ground truth.
-- The phase-segmentation filter is biased toward signs with single-motion
-  structure. Signs with multi-peak or oscillatory motion (e.g., TWINS1,
-  COMB2, PIPE2) had drop rates above 50%.
-- The phase-aware improvement over the baseline (+0.9% top-1) is not
-  statistically significant at the current sample size (McNemar p ≈ 0.50).
-- The webcam demo is designed for one isolated sign at a time. Continuous
-  signing is out of scope.
-
-## References
-
-Key works the design draws on (see the project report bibliography for
-the complete list):
-
-- A. Desai et al., "ASL Citizen: A Community-Sourced Dataset for
-  Advancing Isolated Sign Language Recognition," NeurIPS 2023.
-- S. Jiang et al., "Skeleton Aware Multi-Modal Sign Language
-  Recognition," CVPRW 2021.
-- C. Lea et al., "Temporal Convolutional Networks for Action Segmentation
-  and Detection," CVPR 2017.
-- C. Lugaresi et al., "MediaPipe: A Framework for Building Perception
-  Pipelines," arXiv:1906.08172, 2019.
-- S. K. Liddell and R. E. Johnson, "American Sign Language: The
-  Phonological Base," *Sign Language Studies* 64, 1989.
+---
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+> Add a license of your choice (e.g., MIT for code). Note that the **datasets and
+> third-party checkpoints retain their own licenses** and are not redistributed
+> here — users must obtain them from the original sources under their respective
+> terms.
