@@ -1,9 +1,6 @@
 # Keypoint-Centric Sign Language Recognition
 
-> **Capstone Project — Bahçeşehir University**  
-> Faculty of Engineering and Natural Sciences · Department of Artificial Intelligence Engineering · 2026  
-> **Authors:** Hamdi Alakkad, Metin Yağız Bakış, Yaser Hadri, Aria Sokhangoo  
-> **Advisors:** Prof. Fatih Kahraman · Asst. Prof. Arezoo Sadeghzadeh
+> **Capstone Project**  
 
 ---
 
