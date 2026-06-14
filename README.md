@@ -18,10 +18,6 @@ controlled-comparison discipline:
 > resolution.** Diagnosing and fixing that resolution mismatch is the core
 > contribution of Part II.
 
-**Faculty of Engineering and Natural Sciences — Department of Artificial
-Intelligence Engineering, Bahçeşehir University**
-Authors: Hamdi Alakkad, Metin Yağız Bakış, Yaser Hadri, Aria Sokhangoo
-Advisors: Prof. Fatih Kahraman, Asst. Prof. Arezoo Sadeghzadeh
 
 ---
 
