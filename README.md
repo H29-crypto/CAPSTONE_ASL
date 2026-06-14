@@ -402,19 +402,6 @@ test.
 
 ## Citations
 
-If you reference this work:
-
-```bibtex
-@misc{capstone_slr_2026,
-  title  = {Keypoint-Centric Sign Language Recognition: Phase-Aware Isolated
-            ASL Recognition and Multimodal Continuous Sign Language Recognition},
-  author = {Alakkad, Hamdi and Bakis, Metin Yagiz and Hadri, Yaser and
-            Sokhangoo, Aria},
-  year   = {2026},
-  note   = {Capstone Project, Department of Artificial Intelligence Engineering,
-            Bahcesehir University}
-}
-```
 
 **Datasets**
 - A. Desai et al., "ASL Citizen: A Community-Sourced Dataset for Advancing
@@ -466,14 +453,7 @@ This work uses only open-source software and publicly released,
 research-licensed datasets and checkpoints. No new human-subject data were
 collected. Gloss recognition is **not** translation: outputs are gloss
 sequences, and the system is intended to support — not replace — human
-interpreters. We thank our advisors, Prof. Fatih Kahraman and Asst. Prof. Arezoo
-Sadeghzadeh, for their guidance.
+interpreters.
 
 ---
 
-## License
-
-> Add a license of your choice (e.g., MIT for the code). Note that the
-> **datasets and third-party checkpoints retain their own licenses** and are not
-> redistributed here — obtain them from the original sources under their
-> respective terms.
