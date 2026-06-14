@@ -180,9 +180,6 @@ A feature-space, two-stream multimodal CSLR system. Both backbones are
 
 ## Repository structure
 
-> ⚠️ **Confirm against your actual commit.** Adjust paths/filenames to match what
-> is really in the repo before publishing. Below is the intended layout.
-
 ```
 .
 ├── README.md
