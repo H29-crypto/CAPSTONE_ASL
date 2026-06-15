@@ -1,0 +1,13 @@
+features_rgb/
+features_rgb_stride2/
+features_kp/
+features_kp_aligned/
+features_kp_stride2_aligned/
+features_kp_aligned_stride2_aligned/
+checkpoints/
+runs/
+data/
+continious.ipynb
+.ipynb_checkpoints/
+__pycache__/
+*.pyc

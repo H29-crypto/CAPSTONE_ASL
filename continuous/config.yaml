@@ -1,0 +1,103 @@
+project:
+  name: phoenix2014-multimodal-cslr
+  seed: 42
+  seeds:
+  - 42
+  - 123
+  - 999
+paths:
+  drive_root: /content/drive/MyDrive
+  dataset_root: /content/drive/MyDrive/sign_project/data/phoenix2014-release
+  corpus_dir: phoenix-2014-multisigner
+  annotations_template: annotations/manual/{split}.corpus.csv
+  frames_template: features/fullFrame-256x256px/{split}
+  corrnet_repo: /content/CorrNet
+  corrnet_checkpoint: /content/drive/MyDrive/sign_project/checkpoints/corrnet_phoenix2014.pt
+  hrnet_keypoints_raw: /content/drive/MyDrive/sign_project/data/keypoints_raw
+  manifests: /content/drive/MyDrive/sign_project/manifests
+  features_rgb: /content/drive/MyDrive/sign_project/features_rgb_stride2
+  features_kp: /content/drive/MyDrive/sign_project/features_kp_stride2_aligned
+  runs: /content/drive/MyDrive/sign_project/runs
+dataset:
+  splits:
+  - train
+  - dev
+  - test
+  expected_counts:
+    train: 5672
+    dev: 540
+    test: 629
+  smoke_train: 200
+  smoke_dev: 50
+vocab:
+  blank_index: 0
+  build_from: train
+rgb_dump:
+  dtype: float16
+  chunk: 128
+  chunk_overlap: 2
+  crop: 224
+  normalize: vac_pm1
+  feature_dim: 2048
+keypoints:
+  num_points: 53
+  channels:
+  - x
+  - y
+  - conf
+  - dx
+  - dy
+  left_shoulder_idx: -1
+  right_shoulder_idx: -1
+  center: shoulder_midpoint
+  scale: shoulder_width
+  conf_clip:
+  - 0.0
+  - 1.0
+model:
+  rgb_in_dim: 2048
+  kp_in_dim: 265
+  encoder_dim: 512
+  tcn_layers: 2
+  tcn_kernel: 5
+  temporal_pool: 1
+  head: bilstm
+  bilstm_hidden: 512
+  bilstm_layers: 2
+  transformer_layers: 4
+  transformer_heads: 8
+  transformer_ff: 2048
+  fusion: concat
+  dropout: 0.4
+  aux_ctc: false
+  aux_weight_rgb: 1.0
+  aux_weight_kp: 1.0
+train:
+  optimizer: adam
+  lr: 0.0003
+  weight_decay: 0.0001
+  batch_size: 16
+  epochs: 50
+  grad_clip_norm: 5.0
+  scheduler: cosine
+  warmup_epochs: 2
+  ctc_zero_infinity: true
+  select_on: dev_wer
+  num_workers: 2
+  log_every: 50
+  augmentation:
+    temporal_rescale: 0.2
+    frame_drop_p: 0.1
+decode:
+  dev: greedy
+  final:
+  - greedy
+  - beam
+  beam_width: 10
+eval:
+  official_required_for_report: true
+  test_protocol: 'Pre-declared: dev is used for all selection and tuning. The selected
+    configuration is retrained with the 3 seeds above; the test split is decoded exactly
+    once per seed; we report mean ± std.
+
+    '
