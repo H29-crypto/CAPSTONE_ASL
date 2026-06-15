@@ -185,34 +185,30 @@ A feature-space, two-stream multimodal CSLR system. Both backbones are
 ├── README.md
 ├── LICENSE
 ├── requirements.txt
-├── run.py                           # entry point → realtime_demo/main.py
 │
-├── realtime_demo/                   # Part I — live ASL demo
-│   ├── pipeline.py                  # Phase TCN + Recognition TCN inference
-│   ├── demo.py                      # webcam record-one-sign demo
-│   ├── main.py                      # menu launcher
-│   └── verify_pipeline.py           # offline checkpoint verification
-│
-├── weights/                         # Part I — trained checkpoints
-│   ├── phase_tcn_best_safe_state.pt
-│   └── recognition_tcn_attention_best.pt
-│
-├── assets/                          # MediaPipe model files
-│   ├── hand_landmarker.task
-│   └── pose_landmarker_full.task
-│
-├── data/                            # Part I — label map
-│   └── recognition_label_map_with_split_counts.csv
-│
-├── notebooks/                       # Part I — training notebooks
-│   ├── Feature.ipynb                # MediaPipe keypoint extraction (Tasks API)
-│   └── Un.ipynb                     # full training pipeline
-│
-├── reports/                         # Part I — result tables and figures
-│   ├── figures/                     # 6 result figures (PNG)
-│   ├── report_text/                 # written report sections (Markdown)
-│   ├── final_results_summary.json
-│   └── final_results_tables.md
+├── part1_isolated/                  # Part I — phase-aware isolated ASL (ASL Citizen)
+│   ├── run.py                       # entry point: python part1_isolated/run.py
+│   ├── realtime_demo/
+│   │   ├── pipeline.py              # Phase TCN + Recognition TCN inference
+│   │   ├── demo.py                  # webcam record-one-sign demo
+│   │   ├── main.py                  # menu launcher
+│   │   └── verify_pipeline.py       # offline checkpoint verification
+│   ├── weights/
+│   │   ├── phase_tcn_best_safe_state.pt
+│   │   └── recognition_tcn_attention_best.pt
+│   ├── assets/                      # MediaPipe model files
+│   │   ├── hand_landmarker.task
+│   │   └── pose_landmarker_full.task
+│   ├── data/
+│   │   └── recognition_label_map_with_split_counts.csv
+│   ├── notebooks/
+│   │   ├── Feature.ipynb            # MediaPipe keypoint extraction (Tasks API)
+│   │   └── Un.ipynb                 # full training pipeline
+│   └── reports/
+│       ├── figures/                 # 6 result figures (PNG)
+│       ├── report_text/             # written report sections (Markdown)
+│       ├── final_results_summary.json
+│       └── final_results_tables.md
 │
 ├── part2_continuous/                # Part II — multimodal CSLR (PHOENIX-2014)
 │   ├── training/
@@ -268,9 +264,9 @@ pip install pytorchvideo gdown
 ```
 
 > **Environments.** The continuous pipeline runs in Colab. The Part I **webcam
-> demo** is best run **locally** (VS Code, Python 3.10): Colab has unreliable
-> real-time camera access and dependency conflicts among MediaPipe / TensorFlow
-> / protobuf / NumPy.
+> demo** is best run **locally**: `python part1_isolated/run.py`. Colab has
+> unreliable real-time camera access and dependency conflicts among MediaPipe /
+> TensorFlow / protobuf / NumPy.
 
 ---
 
@@ -328,11 +324,11 @@ contains everyday actions, not signing).
 ## Reproducing the results
 
 ### Part I (isolated)
-1. Extract MediaPipe keypoints for the top-100 subset (`notebooks/Feature.ipynb`).
-2. Run the training pipeline (`notebooks/Un.ipynb`): motion-feature
+1. Extract MediaPipe keypoints for the top-100 subset (`part1_isolated/notebooks/Feature.ipynb`).
+2. Run the training pipeline (`part1_isolated/notebooks/Un.ipynb`): motion-feature
    construction and weak phase pseudo-labels -> Phase Detection TCN ->
    active-region extraction -> Recognition TCN (phase-aware **and** baseline).
-3. Result tables/figures are written under `reports/`.
+3. Result tables/figures are written under `part1_isolated/reports/`.
 
 ### Part II (continuous)
 All paths live in `part2_continuous/training/config.yaml`; set them once.
@@ -376,12 +372,13 @@ Training is fully **resumable**: every job checkpoints `best.pt` (by dev WER) an
   substitution / insertion / deletion highlighted. Makes the WER concrete and
   exposes interpretable failure modes (similar-sign substitutions and CTC
   repeat-insertions).
-- **Part I real-time demo** — `realtime_demo/demo.py`: run `python run.py`,
-  choose **[1]**, then press **R** to record a ~2-second clip. The pipeline
-  extracts MediaPipe landmarks, runs the Phase TCN to find the active region,
-  and returns the top-5 predictions among 100 ASL classes. (There is no live
-  demo for the continuous model: it needs HRNet whole-body keypoints and outputs
-  DGS weather-domain glosses, both out of scope for a webcam.)
+- **Part I real-time demo** — `part1_isolated/realtime_demo/demo.py`: run
+  `python part1_isolated/run.py`, choose **[1]**, then press **R** to record a
+  ~2-second clip. The pipeline extracts MediaPipe landmarks, runs the Phase TCN
+  to find the active region, and returns the top-5 predictions among 100 ASL
+  classes. (There is no live demo for the continuous model: it needs HRNet
+  whole-body keypoints and outputs DGS weather-domain glosses, both out of
+  scope for a webcam.)
 
 ---
 

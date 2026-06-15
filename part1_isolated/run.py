@@ -1,6 +1,7 @@
 """
-run.py — Sign Language Recognition System entry point.
+run.py — Part I (Isolated ASL) entry point.
 
+Usage:  python part1_isolated/run.py
 Delegates to realtime_demo/main.py:
   [1]  Isolated ASL sign recognition  (Phase-aware TCN, live webcam)
 """
