@@ -183,43 +183,66 @@ A feature-space, two-stream multimodal CSLR system. Both backbones are
 ```
 .
 ├── README.md
-├── isolated/                        # Part I — phase-aware ASL (ASL Citizen)
-│   ├── notebooks/
-│   │   ├── Feature.ipynb            # MediaPipe keypoint extraction (Tasks API)
-│   │   └── Un.ipynb                 # full training pipeline
-│   ├── models/
-│   │   ├── phase_tcn_best_safe_state.pt
-│   │   └── recognition_tcn_attention_best.pt
-│   ├── manifests/
-│   │   └── recognition_label_map_with_split_counts.csv
-│   ├── reports/final_results/       # result tables + figures
-│   └── realtime_demo/
-│       ├── demo.py                  # webcam record-one-sign demo
-│       └── verify_pipeline.py       # offline checkpoint verification
+├── LICENSE
+├── requirements.txt
+├── run.py                           # entry point → realtime_demo/main.py
 │
-├── continuous/                      # Part II — multimodal CSLR (PHOENIX-2014)
-│   ├── config.yaml                  # single source of truth (paths + hyperparams)
-│   ├── src/
-│   │   ├── vocab.py                 # corpus parsing + train-only vocabulary
-│   │   ├── data.py                  # feature dataset, alignment, augmentation
-│   │   ├── models.py                # stream encoders, fusion, BiLSTM, CTC heads
-│   │   ├── decode.py                # greedy CTC decode + WER (S/I/D)
-│   │   ├── train.py                 # training engine (resumable, dev-WER select)
-│   │   ├── utils.py                 # config/seed/path helpers
-│   │   └── official_eval_adapter.py # PHOENIX sclite binding (stub + instructions)
-│   ├── notebooks/
-│   │   ├── 01_dataset_eval_check.ipynb
-│   │   ├── 02_dump_rgb_features_resumable.ipynb   # stride 4 and stride 2
-│   │   ├── 03_prepare_hrnet_keypoints.ipynb
-│   │   └── 04_ctc_sanity_check.ipynb
+├── realtime_demo/                   # Part I — live ASL demo
+│   ├── pipeline.py                  # Phase TCN + Recognition TCN inference
+│   ├── demo.py                      # webcam record-one-sign demo
+│   ├── main.py                      # menu launcher
+│   └── verify_pipeline.py           # offline checkpoint verification
+│
+├── weights/                         # Part I — trained checkpoints
+│   ├── phase_tcn_best_safe_state.pt
+│   └── recognition_tcn_attention_best.pt
+│
+├── assets/                          # MediaPipe model files
+│   ├── hand_landmarker.task
+│   └── pose_landmarker_full.task
+│
+├── data/                            # Part I — label map
+│   └── recognition_label_map_with_split_counts.csv
+│
+├── notebooks/                       # Part I — training notebooks
+│   ├── Feature.ipynb                # MediaPipe keypoint extraction (Tasks API)
+│   └── Un.ipynb                     # full training pipeline
+│
+├── reports/                         # Part I — result tables and figures
+│   ├── figures/                     # 6 result figures (PNG)
+│   ├── report_text/                 # written report sections (Markdown)
+│   ├── final_results_summary.json
+│   └── final_results_tables.md
+│
+├── part2_continuous/                # Part II — multimodal CSLR (PHOENIX-2014)
+│   ├── training/
+│   │   ├── continuous_cslr_pipeline.ipynb   # main Colab notebook (E1–E4)
+│   │   ├── config.yaml              # single source of truth (paths + hyperparams)
+│   │   ├── src/
+│   │   │   ├── vocab.py             # corpus parsing + train-only vocabulary
+│   │   │   ├── data.py              # feature dataset, alignment, augmentation
+│   │   │   ├── models.py            # stream encoders, fusion, BiLSTM, CTC heads
+│   │   │   ├── decode.py            # greedy CTC decode + WER (S/I/D)
+│   │   │   ├── train.py             # training engine (resumable, dev-WER select)
+│   │   │   ├── utils.py             # config/seed/path helpers
+│   │   │   └── official_eval_adapter.py  # PHOENIX sclite binding (stub)
+│   │   ├── manifests/               # PHOENIX split JSONs + 1,231-gloss vocab.json
+│   │   └── notebooks/
+│   │       ├── 01_dataset_eval_check.ipynb
+│   │       ├── 02_dump_rgb_features_resumable.ipynb   # stride 4 and stride 2
+│   │       ├── 03_prepare_hrnet_keypoints.ipynb
+│   │       └── 04_ctc_sanity_check.ipynb
 │   └── results/
-│       ├── final_results_stride2.json
-│       ├── transcription_demo.html  # qualitative ref-vs-prediction view
-│       └── resolution_study.png     # the headline figure
+│       └── transcription_demo.html  # qualitative ref-vs-prediction view (E4 stride-2)
 │
 └── docs/
-    └── final_report.pdf
+    └── Poster.pdf
 ```
+
+> **Note on data and checkpoints.** The ~75 GB PHOENIX feature cache (I3D
+> outputs, HRNet keypoints, per-experiment checkpoints) lives on Google Drive
+> and is not redistributed here. Only code, configs, manifests, and the Part I
+> weights are in this repository.
 
 ---
 
@@ -305,14 +328,14 @@ contains everyday actions, not signing).
 ## Reproducing the results
 
 ### Part I (isolated)
-1. Extract MediaPipe keypoints for the top-100 subset (`isolated/notebooks/Feature.ipynb`).
-2. Run the training pipeline (`isolated/notebooks/Un.ipynb`): motion-feature
+1. Extract MediaPipe keypoints for the top-100 subset (`notebooks/Feature.ipynb`).
+2. Run the training pipeline (`notebooks/Un.ipynb`): motion-feature
    construction and weak phase pseudo-labels -> Phase Detection TCN ->
    active-region extraction -> Recognition TCN (phase-aware **and** baseline).
-3. Result tables/figures are written under `isolated/reports/final_results/`.
+3. Result tables/figures are written under `reports/`.
 
 ### Part II (continuous)
-All paths live in `continuous/config.yaml`; set them once.
+All paths live in `part2_continuous/training/config.yaml`; set them once.
 
 1. **Verify the dataset** (`01_*`) — confirm official counts (5,672/540/629) and
    build the train-only vocabulary.
@@ -325,6 +348,7 @@ All paths live in `continuous/config.yaml`; set them once.
 5. **Train any experiment** with a one-line call (~30-40 min each on a T4):
 
 ```python
+# run inside part2_continuous/training/ (or from the main Colab notebook)
 from src.train import run_training
 run_training(cfg, ("rgb",),     "E1_rgb")                                    # video only
 run_training(cfg, ("kp",),      "E2_kp")                                     # keypoints only
@@ -346,21 +370,18 @@ Training is fully **resumable**: every job checkpoints `best.pt` (by dev WER) an
 
 ## Demos and figures
 
-- **`continuous/results/transcription_demo.html`** — a qualitative, color-coded
-  view of the best model (E4 stride-2) transcribing real PHOENIX-2014 test
-  sentences: reference vs. predicted glosses, with correct / substitution /
-  insertion / deletion highlighted. Makes the WER concrete and exposes
-  interpretable failure modes (similar-sign substitutions and CTC
+- **`part2_continuous/results/transcription_demo.html`** — a qualitative,
+  color-coded view of the best model (E4 stride-2) transcribing real
+  PHOENIX-2014 test sentences: reference vs. predicted glosses, with correct /
+  substitution / insertion / deletion highlighted. Makes the WER concrete and
+  exposes interpretable failure modes (similar-sign substitutions and CTC
   repeat-insertions).
-- **`continuous/results/resolution_study.png`** — the headline figure: test WER
-  for E1/E3/E4 at stride 4 vs stride 2, with the E2 keypoint-only reference line,
-  showing fusion crossing below it at stride 2.
-- **Part I real-time demo** — `isolated/realtime_demo/demo.py`: press **R** to
-  record a ~2-second clip; the pipeline extracts MediaPipe landmarks, runs the
-  Phase TCN to find the active region, and returns the top prediction among 100
-  classes. (There is no live demo for the continuous model: it needs HRNet
-  whole-body keypoints and outputs DGS weather-domain glosses, both out of scope
-  for a webcam.)
+- **Part I real-time demo** — `realtime_demo/demo.py`: run `python run.py`,
+  choose **[1]**, then press **R** to record a ~2-second clip. The pipeline
+  extracts MediaPipe landmarks, runs the Phase TCN to find the active region,
+  and returns the top-5 predictions among 100 ASL classes. (There is no live
+  demo for the continuous model: it needs HRNet whole-body keypoints and outputs
+  DGS weather-domain glosses, both out of scope for a webcam.)
 
 ---
 
